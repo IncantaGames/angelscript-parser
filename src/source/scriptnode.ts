@@ -46,7 +46,14 @@ export enum eScriptNode {
 	snListPattern,
 	snNamedArgument,
 	snScope,
-	snTryCatch,
+	// snTryCatch,
+	snUnrealDeclarator,
+	snUnrealDeclaratorObject,
+	snUnrealDefaultValue,
+	snUnrealAccess,
+	snUnrealAccessValue,
+	snUnrealAccessValueModifier,
+	snUnrealAccessReference,
 }
 
 export class sToken {

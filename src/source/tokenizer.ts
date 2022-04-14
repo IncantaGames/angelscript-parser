@@ -25,8 +25,8 @@ export class asCTokenizer {
 			return '<multiple lines comment>';
 		if (tokenType == eTokenType.ttIdentifier) return '<identifier>';
 		if (tokenType == eTokenType.ttIntConstant) return '<integer constant>';
-		if (tokenType == eTokenType.ttFloatConstant) return '<float constant>';
-		if (tokenType == eTokenType.ttDoubleConstant)
+		if (tokenType == eTokenType.ttFloat32Constant) return '<float constant>';
+		if (tokenType == eTokenType.ttFloat64Constant)
 			return '<double constant>';
 		if (tokenType == eTokenType.ttStringConstant)
 			return '<string constant>';
@@ -255,12 +255,12 @@ export class asCTokenizer {
 					(source[n] == 'f' || source[n] == 'F')
 				) {
 					return {
-						tokenType: eTokenType.ttFloatConstant,
+						tokenType: eTokenType.ttFloat32Constant,
 						length: n + 1,
 					};
 				} else {
 					return {
-						tokenType: eTokenType.ttDoubleConstant,
+						tokenType: eTokenType.ttFloat64Constant,
 						length: n,
 					};
 				}
@@ -272,14 +272,20 @@ export class asCTokenizer {
 			};
 		}
 
+		let stringStart = 0;
+
+		if (source[0] == "n" && (source[1] == '"' || source[1] == "'")) {
+			stringStart = 1;
+		}
+
 		// String constant between double or single quotes
-		if (source[0] == '"' || source[0] == "'") {
+		if (source[stringStart+0] == '"' || source[stringStart+0] == "'") {
 			// Is it a normal string constant or a heredoc string constant?
 			if (
 				source.length >= 6 &&
-				source[0] == '"' &&
-				source[1] == '"' &&
-				source[2] == '"'
+				source[stringStart+0] == '"' &&
+				source[stringStart+1] == '"' &&
+				source[stringStart+2] == '"'
 			) {
 				// Heredoc string constant (spans multiple lines, no escape sequences)
 
@@ -301,14 +307,14 @@ export class asCTokenizer {
 				};
 			} else {
 				// Normal string constant
-				let tokenType = eTokenType.ttStringConstant;
-				let quote = source[0];
+				let tokenType = stringStart == 0 ? eTokenType.ttStringConstant : eTokenType.ttUnrealNameLiteral;
+				let quote = source[stringStart+0];
 				let evenSlashes = true;
-				let n = 1;
+				let n = stringStart+1;
 
 				for (; n < source.length; n++) {
 					if (source[n] == '\n') {
-						tokenType = eTokenType.ttMultilineStringConstant;
+						tokenType = stringStart == 0 ? eTokenType.ttMultilineStringConstant : eTokenType.ttUnrealNameLiteralMultiline;
 					}
 					if (source[n] == quote && evenSlashes) {
 						return {
@@ -321,7 +327,7 @@ export class asCTokenizer {
 				}
 
 				return {
-					tokenType: eTokenType.ttNonTerminatedStringConstant,
+					tokenType: stringStart == 0 ? eTokenType.ttNonTerminatedStringConstant : eTokenType.ttUnrealNameLiteralNonTerminated,
 					length: n,
 				};
 			}

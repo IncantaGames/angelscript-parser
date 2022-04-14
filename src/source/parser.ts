@@ -31,7 +31,7 @@ import {
 import {
 	ABSTRACT_TOKEN,
 	eTokenType,
-	EXPLICIT_TOKEN,
+	// EXPLICIT_TOKEN,
 	EXTERNAL_TOKEN,
 	FINAL_TOKEN,
 	FROM_TOKEN,
@@ -1219,7 +1219,7 @@ export class asCParser {
 			if (
 				this.IdentifierIs(t1, FINAL_TOKEN) ||
 				this.IdentifierIs(t1, OVERRIDE_TOKEN) ||
-				this.IdentifierIs(t1, EXPLICIT_TOKEN) ||
+				// this.IdentifierIs(t1, EXPLICIT_TOKEN) ||
 				this.IdentifierIs(t1, PROPERTY_TOKEN)
 			)
 				funcNode.AddChildLast(this.ParseIdentifier());
@@ -2229,11 +2229,14 @@ export class asCParser {
 	protected IsConstant(tokenType: number) {
 		return (
 			tokenType == eTokenType.ttIntConstant ||
-			tokenType == eTokenType.ttFloatConstant ||
-			tokenType == eTokenType.ttDoubleConstant ||
+			tokenType == eTokenType.ttFloat32Constant ||
+			tokenType == eTokenType.ttFloat64Constant ||
 			tokenType == eTokenType.ttStringConstant ||
 			tokenType == eTokenType.ttMultilineStringConstant ||
 			tokenType == eTokenType.ttHeredocStringConstant ||
+			tokenType == eTokenType.ttUnrealNameLiteral ||
+			tokenType == eTokenType.ttUnrealNameLiteralMultiline ||
+			tokenType == eTokenType.ttUnrealNameLiteralNonTerminated ||
 			tokenType == eTokenType.ttTrue ||
 			tokenType == eTokenType.ttFalse ||
 			tokenType == eTokenType.ttBitsConstant ||
@@ -2287,6 +2290,8 @@ export class asCParser {
 						node.AddChildLast(this.ParseEnumeration()); // Handle enumerations
 					} else if (t1.type == eTokenType.ttTypedef) {
 						node.AddChildLast(this.ParseTypedef()); // Handle primitive typedefs
+					} else if (t1.type == eTokenType.ttUClass || t1.type == eTokenType.ttUStruct) {
+						node.AddChildLast(this.ParseUnrealDeclarator());
 					} else if (t1.type == eTokenType.ttClass) {
 						node.AddChildLast(this.ParseClass());
 					} else if (t1.type == eTokenType.ttMixin) {
@@ -2958,7 +2963,7 @@ export class asCParser {
 					if (
 						!this.IdentifierIs(t1, FINAL_TOKEN) &&
 						!this.IdentifierIs(t1, OVERRIDE_TOKEN) &&
-						!this.IdentifierIs(t1, EXPLICIT_TOKEN) &&
+						// !this.IdentifierIs(t1, EXPLICIT_TOKEN) &&
 						!this.IdentifierIs(t1, PROPERTY_TOKEN)
 					) {
 						this.RewindTo(t1);
@@ -3463,6 +3468,18 @@ export class asCParser {
 				node.AddChildLast(this.ParseVirtualPropertyDecl(true, false));
 			} else if (this.IsVarDecl()) {
 				node.AddChildLast(this.ParseDeclaration(true));
+			} else if (
+				t.type === eTokenType.ttUProperty ||
+				t.type === eTokenType.ttUFunction
+			) {
+				node.AddChildLast(this.ParseUnrealDeclarator());
+			} else if (t.type === eTokenType.ttDefault) {
+				node.AddChildLast(this.ParseUnrealDefaultValue());
+			} else if (t.type === eTokenType.ttAccess) {
+				const accessNode = this.ParseUnrealAccess();
+				if (accessNode !== null) {
+					node.AddChildLast(accessNode);
+				}
 			} else if (t.type == eTokenType.ttEndStatement) {
 				// Skip empty declarations
 				t = this.GetToken();
@@ -3755,6 +3772,234 @@ export class asCParser {
 		}
 	}
 
+	protected ParseUnrealDeclaratorObject() {
+		let node = this.CreateNode(eScriptNode.snUnrealDeclaratorObject);
+
+		let t = this.GetToken();
+
+		// should be the open parenthesis, let's start tracking pos
+		node.UpdateSourcePos(t.pos, t.length);
+
+		let shouldAssign = false;
+		while (t.type !== eTokenType.ttCloseParanthesis) {
+			t = this.GetToken();
+
+			if (t.type === eTokenType.ttIdentifier) {
+				const keyNode = this.CreateNode(eScriptNode.snIdentifier);
+				keyNode.SetToken(t);
+				keyNode.UpdateSourcePos(t.pos, t.length);
+				node.AddChildLast(keyNode);
+				shouldAssign = true;
+			} else if (t.type === eTokenType.ttListSeparator) {
+				shouldAssign = false;
+			} else if (
+				t.type === eTokenType.ttAssignment &&
+				node.lastChild &&
+				shouldAssign
+			) {
+				const assignmentNode = this.CreateNode(eScriptNode.snAssignment);
+
+				t = this.GetToken();
+
+				if (t.type === eTokenType.ttIdentifier) {
+					const valueNode = this.CreateNode(eScriptNode.snIdentifier);
+					valueNode.SetToken(t);
+					valueNode.UpdateSourcePos(t.pos, t.length);
+					assignmentNode.AddChildLast(valueNode);
+				} else if (this.IsConstant(t.type)) {
+					const valueNode = this.CreateNode(eScriptNode.snConstant);
+					valueNode.SetToken(t);
+					valueNode.UpdateSourcePos(t.pos, t.length);
+					assignmentNode.AddChildLast(valueNode);
+				} else if (t.type === eTokenType.ttOpenParanthesis) {
+					this.RewindTo(t);
+					const valueNode = this.ParseUnrealDeclaratorObject();
+					assignmentNode.AddChildLast(valueNode);
+				} else {
+					this.RewindTo(t);
+				}
+
+				node.lastChild.AddChildLast(assignmentNode);
+				node.UpdateSourcePos(node.lastChild.tokenPos, node.lastChild.tokenLength);
+			}
+		}
+
+		// should be the close parenthesis, let's make sure to add it to the position details
+		node.UpdateSourcePos(t.pos, t.length);
+
+		return node;
+	}
+
+	protected ParseUnrealDeclarator() {
+		const declaratorNode = this.CreateNode(eScriptNode.snUnrealDeclarator);
+
+		let t = this.GetToken();
+		declaratorNode.SetToken(t);
+		declaratorNode.UpdateSourcePos(t.pos, t.length);
+
+		t = this.GetToken();
+		this.RewindTo(t);
+
+		if (t.type !== eTokenType.ttOpenParanthesis) {
+			return declaratorNode;
+		}
+
+		const objectNode = this.ParseUnrealDeclaratorObject();
+		declaratorNode.AddChildLast(objectNode);
+
+		return declaratorNode;
+	}
+
+	protected ParseUnrealDefaultValue() {
+		const node = this.CreateNode(eScriptNode.snUnrealDefaultValue);
+
+		let t = this.GetToken();
+		node.SetToken(t);
+		node.UpdateSourcePos(t.pos, t.length);
+
+		const variableNode = this.CreateNode(eScriptNode.snIdentifier);
+		t = this.GetToken();
+		if (t.type !== eTokenType.ttIdentifier) {
+			this.RewindTo(t);
+			return node;
+		}
+		variableNode.SetToken(t);
+		variableNode.UpdateSourcePos(t.pos, t.length);
+
+		t = this.GetToken();
+		if (t.type === eTokenType.ttDot) {
+			t = this.GetToken();
+			if (t.type !== eTokenType.ttIdentifier) {
+				this.RewindTo(t);
+				return node;
+			}
+			const childVariableNode = this.CreateNode(eScriptNode.snIdentifier);
+			childVariableNode.SetToken(t);
+			childVariableNode.UpdateSourcePos(t.pos, t.length);
+			variableNode.AddChildLast(childVariableNode);
+
+			t = this.GetToken();
+		}
+
+		node.AddChildLast(variableNode);
+
+		const setUsingParenthesis = t.type === eTokenType.ttOpenParanthesis;
+
+		if (t.type !== eTokenType.ttAssignment && !setUsingParenthesis) {
+			this.RewindTo(t);
+			return node;
+		}
+
+		t = this.GetToken();
+
+		if (!this.IsConstant(t.type)) {
+			this.RewindTo(t);
+			return node;
+		}
+
+		const valueNode = this.CreateNode(eScriptNode.snConstant);
+		valueNode.SetToken(t);
+		valueNode.UpdateSourcePos(t.pos, t.length);
+
+		node.AddChildLast(valueNode);
+
+		t = this.GetToken();
+
+		if (setUsingParenthesis && t.type === eTokenType.ttCloseParanthesis) {
+			t = this.GetToken();
+		}
+
+		if (t.type !== eTokenType.ttEndStatement) {
+			this.RewindTo(t);
+			return node;
+		}
+
+		node.UpdateSourcePos(t.pos, t.length);
+
+		return node;
+	}
+
+	protected ParseUnrealAccessValue() {
+		const node = this.CreateNode(eScriptNode.snUnrealAccessValue);
+
+		let t: sToken;
+		do {
+			t = this.GetToken();
+
+			if (
+				t.type === eTokenType.ttPrivate ||
+				t.type === eTokenType.ttProtected ||
+				t.type === eTokenType.ttIdentifier ||
+				t.type === eTokenType.ttStar
+			) {
+				const valueItemNode = this.CreateNode(eScriptNode.snIdentifier);
+				valueItemNode.SetToken(t);
+				valueItemNode.UpdateSourcePos(t.pos, t.length);
+
+				let t1 = this.GetToken();
+
+				if (t1.type !== eTokenType.ttOpenParanthesis) {
+					this.RewindTo(t1);
+					node.AddChildLast(valueItemNode);
+					continue;
+				}
+
+				do {
+					t = this.GetToken();
+
+					if (t.type === eTokenType.ttIdentifier) {
+						const modifierNode = this.CreateNode(eScriptNode.snUnrealAccessValueModifier);
+						modifierNode.SetToken(t);
+						modifierNode.UpdateSourcePos(t.pos, t.length);
+						valueItemNode.AddChildLast(modifierNode);
+					}
+				} while (t.type !== eTokenType.ttCloseParanthesis)
+
+				node.AddChildLast(valueItemNode);
+			}
+		} while (t.type !== eTokenType.ttEndStatement)
+
+		return node;
+	}
+
+	protected ParseUnrealAccess() {
+		let t = this.GetToken();
+
+		if (t.type === eTokenType.ttIdentifier) {
+			const node = this.CreateNode(eScriptNode.snUnrealAccess);
+
+			node.SetToken(t);
+			node.UpdateSourcePos(t.pos, t.length);
+
+			t = this.GetToken();
+			if (t.type !== eTokenType.ttAssignment) {
+				this.RewindTo(t);
+				return node;
+			}
+
+			const valueNode = this.ParseUnrealAccessValue();
+			node.AddChildLast(valueNode);
+
+			return node;
+		} else if (t.type === eTokenType.ttColon) {
+			const node = this.CreateNode(eScriptNode.snUnrealAccessReference);
+
+			t = this.GetToken();
+			if (t.type !== eTokenType.ttIdentifier) {
+				this.RewindTo(t);
+				return node;
+			}
+
+			node.SetToken(t);
+			node.UpdateSourcePos(t.pos, t.length);
+
+			return node;
+		} else {
+			this.RewindTo(t);
+			return null;
+		}
+	}
+
 	// 3865
 	protected ParseDeclaration(
 		isClassProp: boolean = false,
@@ -3853,8 +4098,8 @@ export class asCParser {
 			return this.ParseDoWhile();
 		} else if (t1.type == eTokenType.ttSwitch) {
 			return this.ParseSwitch();
-		} else if (t1.type == eTokenType.ttTry) {
-			return this.ParseTryCatch();
+		// } else if (t1.type == eTokenType.ttTry) {
+		// 	return this.ParseTryCatch();
 		} else {
 			if (this.IsVarDecl()) {
 				this.Error(TXT_UNEXPECTED_VAR_DECL, t1);
@@ -4072,6 +4317,7 @@ export class asCParser {
 	}
 
 	//  4206
+	/* not used in unreal engine
 	protected ParseTryCatch() {
 		let node = this.CreateNode(eScriptNode.snTryCatch);
 
@@ -4100,6 +4346,7 @@ export class asCParser {
 
 		return node;
 	}
+	*/
 
 	// 4240
 	protected ParseFor() {
