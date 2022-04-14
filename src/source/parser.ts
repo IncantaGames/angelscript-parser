@@ -19,12 +19,9 @@ import {
 	TXT_INSTEAD_FOUND_KEYWORD_s,
 	TXT_INSTEAD_FOUND_s,
 	TXT_NAMED_ARGS_WITH_OLD_SYNTAX,
-	TXT_NONTERMINATED_STRING,
 	TXT_UNEXPECTED_END_OF_FILE,
 	TXT_UNEXPECTED_TOKEN_s,
 	TXT_UNEXPECTED_VAR_DECL,
-	TXT_WHILE_PARSING_ARG_LIST,
-	TXT_WHILE_PARSING_EXPRESSION,
 	TXT_WHILE_PARSING_NAMESPACE,
 	TXT_WHILE_PARSING_STATEMENT_BLOCK,
 } from './texts';
@@ -834,9 +831,7 @@ export class asCParser {
 
 				// Parse optional expression for the default arg
 				if (t1.type == eTokenType.ttAssignment) {
-					// Do a superficial parsing of the default argument
-					// The actual parsing will be done when the argument is compiled for a function call
-					node.AddChildLast(this.SuperficiallyParseExpression());
+					node.AddChildLast(this.ParseExpression());
 					if (this.isSyntaxError) return node;
 
 					t1 = this.GetToken();
@@ -856,79 +851,6 @@ export class asCParser {
 				}
 			}
 		}
-	}
-
-	// 820
-	protected SuperficiallyParseExpression() {
-		let node = this.CreateNode(eScriptNode.snExpression);
-
-		// Simply parse everything until the first , or ), whichever comes first.
-		// Keeping in mind that () and {} can group expressions.
-
-		let start = this.GetToken();
-		this.RewindTo(start);
-
-		let stack = [];
-		let t: sToken;
-		for (;;) {
-			t = this.GetToken();
-
-			if (t.type == eTokenType.ttOpenParanthesis) {
-				stack.push('(');
-			} else if (t.type == eTokenType.ttCloseParanthesis) {
-				if (!stack.length) {
-					// Expression has ended. This token is not part of expression
-					this.RewindTo(t);
-					break;
-				} else if (stack[stack.length - 1] == '(') {
-					// Group has ended
-					stack.pop();
-				} else {
-					// Wrong syntax
-					this.RewindTo(t);
-					this.Error(format(TXT_UNEXPECTED_TOKEN_s, ')'), t);
-					return node;
-				}
-			} else if (t.type == eTokenType.ttListSeparator) {
-				if (!stack.length) {
-					// Expression has ended. This token is not part of expression
-					this.RewindTo(t);
-					break;
-				}
-			} else if (t.type == eTokenType.ttStartStatementBlock) {
-				stack.push('{');
-			} else if (t.type == eTokenType.ttEndStatementBlock) {
-				if (!stack.length || stack[stack.length - 1] != '{') {
-					// Wrong syntax
-					this.RewindTo(t);
-					this.Error(format(TXT_UNEXPECTED_TOKEN_s, '}'), t);
-					return node;
-				} else {
-					// Group has ended
-					stack.pop();
-				}
-			} else if (t.type == eTokenType.ttEndStatement) {
-				// Wrong syntax (since we're parsing a default arg expression)
-				this.RewindTo(t);
-				this.Error(format(TXT_UNEXPECTED_TOKEN_s, ';'), t);
-				return node;
-			} else if (t.type == eTokenType.ttNonTerminatedStringConstant) {
-				this.RewindTo(t);
-				this.Error(TXT_NONTERMINATED_STRING, t);
-				return node;
-			} else if (t.type == eTokenType.ttEnd) {
-				// Wrong syntax
-				this.RewindTo(t);
-				this.Error(TXT_UNEXPECTED_END_OF_FILE, t);
-				this.Info(TXT_WHILE_PARSING_EXPRESSION, start);
-				return node;
-			}
-
-			// Include the token in the node
-			node.UpdateSourcePos(t.pos, t.length);
-		}
-
-		return node;
 	}
 
 	// 922
@@ -1703,9 +1625,7 @@ export class asCParser {
 			return node;
 		}
 
-		// We should just find the end of the statement block here. The statements
-		// will be parsed on request by the compiler once it starts the compilation.
-		node.AddChildLast(this.SuperficiallyParseStatementBlock());
+		node.AddChildLast(this.ParseStatementBlock());
 
 		return node;
 	}
@@ -2720,9 +2640,9 @@ export class asCParser {
 			if (token.type == eTokenType.ttAssignment) {
 				this.RewindTo(token);
 
-				let tmp = this.SuperficiallyParseVarInit();
+				const varInitNode = this.ParseVarInit();
+				if (varInitNode) node.AddChildLast(varInitNode);
 
-				node.AddChildLast(tmp);
 				if (this.isSyntaxError) return node;
 
 				token = this.GetToken();
@@ -3122,9 +3042,7 @@ export class asCParser {
 			return node;
 		}
 
-		// We should just find the end of the statement block here. The statements
-		// will be parsed on request by the compiler once it starts the compilation.
-		node.AddChildLast(this.SuperficiallyParseStatementBlock());
+		node.AddChildLast(this.ParseStatementBlock());
 
 		return node;
 	}
@@ -3230,9 +3148,7 @@ export class asCParser {
 					t1 = this.GetToken();
 					if (t1.type == eTokenType.ttStartStatementBlock) {
 						this.RewindTo(t1);
-						accessorNode.AddChildLast(
-							this.SuperficiallyParseStatementBlock()
-						);
+						accessorNode.AddChildLast(this.ParseStatementBlock());
 						if (this.isSyntaxError) return node;
 					} else if (t1.type != eTokenType.ttEndStatement) {
 						this.Error(this.ExpectedTokens(';', '{'), t1);
@@ -3509,14 +3425,8 @@ export class asCParser {
 	}
 
 	// 3495
-	public ParseVarInit(in_script: asCScriptCode, in_init: asCScriptNode) {
-		this.Reset();
-
-		// Tell the parser to validate the identifiers as valid types
-		this.checkValidTypes = true;
-
-		this.script = in_script;
-		this.sourcePos = in_init.tokenPos;
+	public ParseVarInit(): asCScriptNode | null {
+		let node: asCScriptNode;
 
 		// If next token is assignment, parse expression
 		let t = this.GetToken();
@@ -3526,13 +3436,13 @@ export class asCParser {
 			this.RewindTo(t);
 
 			if (t.type == eTokenType.ttStartStatementBlock) {
-				this.scriptNode = this.ParseInitList();
+				node = this.ParseInitList();
 			} else {
-				this.scriptNode = this.ParseAssignment();
+				node = this.ParseAssignment();
 			}
 		} else if (t.type == eTokenType.ttOpenParanthesis) {
 			this.RewindTo(t);
-			this.scriptNode = this.ParseArgList();
+			node = this.ParseArgList();
 		} else {
 			const tokens = [
 				eTokenType.ttAssignment,
@@ -3558,124 +3468,10 @@ export class asCParser {
 		}
 
 		if (this.isSyntaxError || this.errorWhileParsing) {
-			return -1;
+			return null;
 		}
 
-		return 0;
-	}
-
-	// 3544
-	protected SuperficiallyParseVarInit() {
-		let node = this.CreateNode(eScriptNode.snAssignment);
-
-		let t = this.GetToken();
-		node.UpdateSourcePos(t.pos, t.length);
-
-		if (t.type == eTokenType.ttAssignment) {
-			t = this.GetToken();
-			let start = t;
-
-			// Find the end of the expression
-			let indentParan = 0;
-			let indentBrace = 0;
-
-			while (
-				indentParan ||
-				indentBrace ||
-				(t.type != eTokenType.ttListSeparator &&
-					t.type != eTokenType.ttEndStatement &&
-					t.type != eTokenType.ttEndStatementBlock)
-			) {
-				if (t.type == eTokenType.ttOpenParanthesis) {
-					indentParan++;
-				} else if (t.type == eTokenType.ttCloseParanthesis) {
-					indentParan--;
-				} else if (t.type == eTokenType.ttStartStatementBlock) {
-					indentBrace++;
-				} else if (t.type == eTokenType.ttEndStatementBlock) {
-					indentBrace--;
-				} else if (t.type == eTokenType.ttNonTerminatedStringConstant) {
-					this.Error(TXT_NONTERMINATED_STRING, t);
-					break;
-				} else if (t.type == eTokenType.ttEnd) {
-					this.Error(TXT_UNEXPECTED_END_OF_FILE, t);
-					this.Info(TXT_WHILE_PARSING_EXPRESSION, start);
-					break;
-				}
-				t = this.GetToken();
-			}
-
-			// Rewind so that the next token read is the list separator, end statement, or end statement block
-			this.RewindTo(t);
-		} else if (t.type == eTokenType.ttOpenParanthesis) {
-			let start = t;
-
-			// Find the end of the argument list
-			let indent = 1;
-			while (indent) {
-				t = this.GetToken();
-				if (t.type == eTokenType.ttOpenParanthesis) {
-					indent++;
-				} else if (t.type == eTokenType.ttCloseParanthesis) {
-					indent--;
-				} else if (t.type == eTokenType.ttNonTerminatedStringConstant) {
-					this.Error(TXT_NONTERMINATED_STRING, t);
-					break;
-				} else if (t.type == eTokenType.ttEnd) {
-					this.Error(TXT_UNEXPECTED_END_OF_FILE, t);
-					this.Info(TXT_WHILE_PARSING_ARG_LIST, start);
-					break;
-				}
-			}
-		} else {
-			const tokens = [
-				eTokenType.ttAssignment,
-				eTokenType.ttOpenParanthesis,
-			];
-			this.Error(this.ExpectedOneOf(tokens, 2), t);
-			this.Error(this.InsteadFound(t), t);
-		}
-
-		return node;
-	}
-
-	// 3624
-	protected SuperficiallyParseStatementBlock() {
-		let node = this.CreateNode(eScriptNode.snStatementBlock);
-
-		// This function will only superficially parse the statement block in order to find the end of it
-		let t1 = this.GetToken();
-		if (t1.type != eTokenType.ttStartStatementBlock) {
-			this.Error(this.ExpectedToken('{'), t1);
-			this.Error(this.InsteadFound(t1), t1);
-			return node;
-		}
-
-		node.UpdateSourcePos(t1.pos, t1.length);
-
-		let start = t1;
-
-		let level = 1;
-
-		while (level > 0 && !this.isSyntaxError) {
-			t1 = this.GetToken();
-			if (t1.type == eTokenType.ttEndStatementBlock) {
-				level--;
-			} else if (t1.type == eTokenType.ttStartStatementBlock) {
-				level++;
-			} else if (t1.type == eTokenType.ttNonTerminatedStringConstant) {
-				this.Error(TXT_NONTERMINATED_STRING, t1);
-				break;
-			} else if (t1.type == eTokenType.ttEnd) {
-				this.Error(TXT_UNEXPECTED_END_OF_FILE, t1);
-				this.Info(TXT_WHILE_PARSING_STATEMENT_BLOCK, start);
-				break;
-			}
-		}
-
-		node.UpdateSourcePos(t1.pos, t1.length);
-
-		return node;
+		return node!;
 	}
 
 	// 3754
@@ -4027,14 +3823,14 @@ export class asCParser {
 			if (this.isSyntaxError) return node;
 
 			if (isClassProp || isGlobalVar) {
-				// Only superficially parse the initialization info for the class property
 				t = this.GetToken();
 				this.RewindTo(t);
 				if (
 					t.type == eTokenType.ttAssignment ||
 					t.type == eTokenType.ttOpenParanthesis
 				) {
-					node.AddChildLast(this.SuperficiallyParseVarInit());
+					const varInitNode = this.ParseVarInit();
+					if (varInitNode) node.AddChildLast(varInitNode);
 					if (this.isSyntaxError) return node;
 				}
 			} else {
