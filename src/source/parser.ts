@@ -3582,8 +3582,10 @@ export class asCParser {
 
 			if (t.type === eTokenType.ttIdentifier) {
 				const keyNode = this.CreateNode(eScriptNode.snIdentifier);
-				keyNode.SetToken(t);
-				keyNode.UpdateSourcePos(t.pos, t.length);
+				const keyIdentifierNode = this.CreateNode(eScriptNode.snIdentifier);
+				keyIdentifierNode.SetToken(t);
+				keyIdentifierNode.UpdateSourcePos(t.pos, t.length);
+				keyNode.AddChildLast(keyIdentifierNode);
 				node.AddChildLast(keyNode);
 				shouldAssign = true;
 			} else if (t.type === eTokenType.ttListSeparator) {
@@ -3634,9 +3636,9 @@ export class asCParser {
 		declaratorNode.UpdateSourcePos(t.pos, t.length);
 
 		t = this.GetToken();
-		this.RewindTo(t);
 
 		if (t.type !== eTokenType.ttOpenParanthesis) {
+			this.RewindTo(t);
 			return declaratorNode;
 		}
 
@@ -3659,8 +3661,10 @@ export class asCParser {
 			this.RewindTo(t);
 			return node;
 		}
-		variableNode.SetToken(t);
-		variableNode.UpdateSourcePos(t.pos, t.length);
+		const variablePrimaryNode = this.CreateNode(eScriptNode.snIdentifier);
+		variablePrimaryNode.SetToken(t);
+		variablePrimaryNode.UpdateSourcePos(t.pos, t.length);
+		variableNode.AddChildLast(variablePrimaryNode);
 
 		t = this.GetToken();
 		if (t.type === eTokenType.ttDot) {
@@ -3669,10 +3673,10 @@ export class asCParser {
 				this.RewindTo(t);
 				return node;
 			}
-			const childVariableNode = this.CreateNode(eScriptNode.snIdentifier);
-			childVariableNode.SetToken(t);
-			childVariableNode.UpdateSourcePos(t.pos, t.length);
-			variableNode.AddChildLast(childVariableNode);
+			const variableSecondaryNode = this.CreateNode(eScriptNode.snIdentifier);
+			variableSecondaryNode.SetToken(t);
+			variableSecondaryNode.UpdateSourcePos(t.pos, t.length);
+			variableNode.AddChildLast(variableSecondaryNode);
 
 			t = this.GetToken();
 		}
