@@ -5,6 +5,8 @@ export enum eTokenType {
 
 	// White space and comments
 	ttWhiteSpace,          // ' ', '\t', '\r', '\n', UTF8 byte-order-mark
+	ttWhiteSpaceWithEmptyLine,          // whitespace that includes one empty line
+	ttWhiteSpaceWithEmptyLines,          // whitespace that includes more than one empty line
 	ttOnelineComment,      // // \n
 	ttMultilineComment,    // /* */
 

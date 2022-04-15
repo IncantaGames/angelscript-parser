@@ -54,6 +54,7 @@ export enum eScriptNode {
 	snUnrealAccessValue,
 	snUnrealAccessValueModifier,
 	snUnrealAccessReference,
+	snEmptyLine,
 }
 
 export class sToken {

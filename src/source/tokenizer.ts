@@ -121,9 +121,17 @@ export class asCTokenizer {
 			if (!isWhiteSpace) break;
 		}
 
+		let tokenType = eTokenType.ttWhiteSpace;
+		const whitespaceString = source.substring(0, n - 1);
+		const hasEmptyLine = /(\r\n\r\n|\n\n)/.exec(whitespaceString) !== null;
+		if (hasEmptyLine) {
+			const hasEmptyLines = /(\r\n\r\n\r\n|\n\n\n)/.exec(whitespaceString) !== null;
+			tokenType = hasEmptyLines ? eTokenType.ttWhiteSpaceWithEmptyLines : eTokenType.ttWhiteSpaceWithEmptyLine;
+		}
+
 		if (n) {
 			return {
-				tokenType: eTokenType.ttWhiteSpace,
+				tokenType,
 				length: n,
 			};
 		}

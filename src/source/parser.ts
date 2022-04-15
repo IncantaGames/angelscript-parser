@@ -881,7 +881,7 @@ export class asCParser {
 				token.length = 0;
 			} else {
 				const tmp = this.tokenizer.GetToken(
-					this.script?.code.substr(this.sourcePos) || ''
+					this.script?.code.substring(this.sourcePos) || ''
 				);
 
 				token.type = tmp.tokenType;
@@ -3396,6 +3396,10 @@ export class asCParser {
 				if (accessNode !== null) {
 					node.AddChildLast(accessNode);
 				}
+			} else if (t.type == eTokenType.ttWhiteSpaceWithEmptyLine || t.type == eTokenType.ttWhiteSpaceWithEmptyLines) {
+				// empty lines should be preserve, but we should never have more than one contiguous empty line
+				t = this.GetToken(); // move along
+				node.AddChildLast(this.CreateNode(eScriptNode.snEmptyLine));
 			} else if (t.type == eTokenType.ttEndStatement) {
 				// Skip empty declarations
 				t = this.GetToken();
@@ -3572,6 +3576,7 @@ export class asCParser {
 		let node = this.CreateNode(eScriptNode.snUnrealDeclaratorObject);
 
 		let t = this.GetToken();
+		this.RewindTo(t); // we rewind so we can get it again in the while loop; this is the first item in the list
 
 		// should be the open parenthesis, let's start tracking pos
 		node.UpdateSourcePos(t.pos, t.length);
@@ -3655,67 +3660,8 @@ export class asCParser {
 		node.SetToken(t);
 		node.UpdateSourcePos(t.pos, t.length);
 
-		const variableNode = this.CreateNode(eScriptNode.snIdentifier);
-		t = this.GetToken();
-		if (t.type !== eTokenType.ttIdentifier) {
-			this.RewindTo(t);
-			return node;
-		}
-		const variablePrimaryNode = this.CreateNode(eScriptNode.snIdentifier);
-		variablePrimaryNode.SetToken(t);
-		variablePrimaryNode.UpdateSourcePos(t.pos, t.length);
-		variableNode.AddChildLast(variablePrimaryNode);
-
-		t = this.GetToken();
-		if (t.type === eTokenType.ttDot) {
-			t = this.GetToken();
-			if (t.type !== eTokenType.ttIdentifier) {
-				this.RewindTo(t);
-				return node;
-			}
-			const variableSecondaryNode = this.CreateNode(eScriptNode.snIdentifier);
-			variableSecondaryNode.SetToken(t);
-			variableSecondaryNode.UpdateSourcePos(t.pos, t.length);
-			variableNode.AddChildLast(variableSecondaryNode);
-
-			t = this.GetToken();
-		}
-
-		node.AddChildLast(variableNode);
-
-		const setUsingParenthesis = t.type === eTokenType.ttOpenParanthesis;
-
-		if (t.type !== eTokenType.ttAssignment && !setUsingParenthesis) {
-			this.RewindTo(t);
-			return node;
-		}
-
-		t = this.GetToken();
-
-		if (!this.IsConstant(t.type)) {
-			this.RewindTo(t);
-			return node;
-		}
-
-		const valueNode = this.CreateNode(eScriptNode.snConstant);
-		valueNode.SetToken(t);
-		valueNode.UpdateSourcePos(t.pos, t.length);
-
-		node.AddChildLast(valueNode);
-
-		t = this.GetToken();
-
-		if (setUsingParenthesis && t.type === eTokenType.ttCloseParanthesis) {
-			t = this.GetToken();
-		}
-
-		if (t.type !== eTokenType.ttEndStatement) {
-			this.RewindTo(t);
-			return node;
-		}
-
-		node.UpdateSourcePos(t.pos, t.length);
-
+		const expressionNode = this.ParseExpressionStatement();
+		node.AddChildLast(expressionNode);
 		return node;
 	}
 
